@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import './OrdersTable.css'
 
-const OrdersTable = ({ onRefreshOrders }) => {
+const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTrigger }) => {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('All Statuses')
   const [orders, setOrders] = useState([])
@@ -11,11 +11,108 @@ const OrdersTable = ({ onRefreshOrders }) => {
   const [fulfilling, setFulfilling] = useState(false)
   const [hasDataLoaded, setHasDataLoaded] = useState(false) // Track if data has been loaded
   
+  // Local date state for independent date control (when not getting dates from props)
+  const [localStartDate, setLocalStartDate] = useState('')
+  const [localEndDate, setLocalEndDate] = useState('')
+  
+  // Use local dates if no props provided, otherwise use props
+  const startDate = propStartDate !== undefined ? propStartDate : localStartDate
+  const endDate = propEndDate !== undefined ? propEndDate : localEndDate
+  
+  // Debug: Log component mode
+  console.log('🔧 OrdersTable mode:', {
+    propStartDate,
+    propEndDate,
+    refreshTrigger,
+    isIndependentMode: propStartDate === undefined && propEndDate === undefined,
+    currentStartDate: startDate,
+    currentEndDate: endDate
+  })
+  
   // Order details state
   const [orderDetails, setOrderDetails] = useState(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [detailsError, setDetailsError] = useState(null)
   const [showDetailsModal, setShowDetailsModal] = useState(false)
+
+  // Save local dates to localStorage when they change (only if not using props)
+  useEffect(() => {
+    if (propStartDate === undefined && localStartDate) {
+      localStorage.setItem('shoplytic-orders-start-date', localStartDate)
+    }
+  }, [localStartDate, propStartDate])
+
+  useEffect(() => {
+    if (propEndDate === undefined && localEndDate) {
+      localStorage.setItem('shoplytic-orders-end-date', localEndDate)
+    }
+  }, [localEndDate, propEndDate])
+
+  // Save orders data to localStorage when it changes
+  useEffect(() => {
+    if (orders.length > 0) {
+      localStorage.setItem('shoplytic-orders-data', JSON.stringify(orders))
+      localStorage.setItem('shoplytic-orders-loaded', 'true')
+      console.log('💾 Saved orders data to localStorage:', orders.length, 'orders')
+    }
+  }, [orders])
+
+  // Save hasDataLoaded state to localStorage
+  useEffect(() => {
+    localStorage.setItem('shoplytic-orders-has-data', hasDataLoaded.toString())
+    console.log('💾 Saved hasDataLoaded state:', hasDataLoaded)
+  }, [hasDataLoaded])
+
+  // Load saved orders data on component mount
+  useEffect(() => {
+    const savedOrders = localStorage.getItem('shoplytic-orders-data')
+    const savedHasDataLoaded = localStorage.getItem('shoplytic-orders-has-data') === 'true'
+    const savedOrdersLoaded = localStorage.getItem('shoplytic-orders-loaded') === 'true'
+    
+    console.log('🔍 OrdersTable mount - checking saved data:', { 
+      hasSavedOrders: !!savedOrders, 
+      savedHasDataLoaded,
+      savedOrdersLoaded,
+      propStartDate,
+      propEndDate,
+      refreshTrigger 
+    })
+    
+    // Restore data if any of the loaded flags are true
+    if (savedOrders && (savedHasDataLoaded || savedOrdersLoaded)) {
+      try {
+        const parsedOrders = JSON.parse(savedOrders)
+        if (Array.isArray(parsedOrders)) {
+          setOrders(parsedOrders)
+          setHasDataLoaded(true)
+          console.log('📋 Restored orders data from localStorage:', parsedOrders.length, 'orders')
+        }
+      } catch (error) {
+        console.error('Error parsing saved orders data:', error)
+        localStorage.removeItem('shoplytic-orders-data')
+        localStorage.removeItem('shoplytic-orders-has-data')
+        localStorage.removeItem('shoplytic-orders-loaded')
+      }
+    }
+    
+    // Also load saved local dates if in independent mode
+    if (propStartDate === undefined) {
+      const savedLocalStartDate = localStorage.getItem('shoplytic-orders-start-date')
+      if (savedLocalStartDate) {
+        setLocalStartDate(savedLocalStartDate)
+        console.log('📅 Restored local start date:', savedLocalStartDate)
+      }
+    }
+    if (propEndDate === undefined) {
+      const savedLocalEndDate = localStorage.getItem('shoplytic-orders-end-date')
+      if (savedLocalEndDate) {
+        setLocalEndDate(savedLocalEndDate)
+        console.log('📅 Restored local end date:', savedLocalEndDate)
+      }
+    }
+  }, [])
+
+  // Removed separate useEffect for local dates since it's now in the mount effect
 
   // Fetch orders from API - no rate limiting, always allow refresh
   const fetchOrders = async () => {
@@ -26,7 +123,22 @@ const OrdersTable = ({ onRefreshOrders }) => {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
       
-      const response = await fetch('https://n8n.food-u.live/webhook/get-orders-list', {
+      // Build URL with date parameters
+      const url = new URL('https://n8n.food-u.live/webhook/get-orders-list')
+      if (startDate) {
+        url.searchParams.append('startDate', startDate)
+        console.log('📅 Added startDate parameter:', startDate)
+      }
+      if (endDate) {
+        url.searchParams.append('endDate', endDate)
+        console.log('📅 Added endDate parameter:', endDate)
+      }
+      
+      console.log('📋 Fetching orders from URL:', url.toString())
+      console.log('📋 URL should match format: https://n8n.food-u.live/webhook/get-orders-list?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD')
+      
+      const response = await fetch(url.toString(), {
+        method: 'GET',
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
@@ -39,7 +151,35 @@ const OrdersTable = ({ onRefreshOrders }) => {
         throw new Error(`API returned ${response.status}: ${response.statusText}`)
       }
       
-      const data = await response.json()
+      // Check if response has content
+      const contentType = response.headers.get('content-type')
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('API returned non-JSON response')
+      }
+      
+      const responseText = await response.text()
+      if (!responseText || responseText.trim() === '') {
+        // Empty response could mean no orders available, not necessarily an error
+        console.log('📋 API returned empty response - assuming no orders available')
+        setOrders([]) // Set empty array
+        setHasDataLoaded(true) // Mark data as loaded
+        setError(null) // Don't show error for empty response
+        // Save empty state to localStorage
+        localStorage.setItem('shoplytic-orders-data', JSON.stringify([]))
+        localStorage.setItem('shoplytic-orders-loaded', 'true')
+        localStorage.setItem('shoplytic-orders-has-data', 'true')
+        return // Exit early without throwing error
+      }
+      
+      let data
+      try {
+        data = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError)
+        console.error('Response text:', responseText)
+        throw new Error('API returned invalid JSON format')
+      }
+      
       console.log('📋 Raw API response:', data)
       
       // Handle different response formats
@@ -102,6 +242,12 @@ const OrdersTable = ({ onRefreshOrders }) => {
         errorMessage = 'Request timed out'
       } else if (err.message.includes('404')) {
         errorMessage = 'Orders API not available - Please activate the webhook in n8n by clicking "Execute workflow"'
+      } else if (err.message.includes('empty response')) {
+        errorMessage = 'API returned empty response - Webhook may not be configured correctly or no data available'
+      } else if (err.message.includes('invalid JSON')) {
+        errorMessage = 'API returned invalid data format - Check webhook response format'
+      } else if (err.message.includes('non-JSON response')) {
+        errorMessage = 'API returned non-JSON response - Check webhook content-type header'
       } else if (err.message.includes('CORS')) {
         errorMessage = 'CORS error - API not allowing requests from this domain'
       } else {
@@ -120,6 +266,33 @@ const OrdersTable = ({ onRefreshOrders }) => {
     // Removed auto-fetch on component mount
     // Data will only be fetched when user clicks refresh button
   }, [])
+
+  // Refetch orders when date range changes (if data has been loaded before)
+  useEffect(() => {
+    console.log('📅 Date range changed:', { startDate, endDate, hasDataLoaded })
+    if (hasDataLoaded && (startDate || endDate)) {
+      console.log('🔄 Auto-refetching orders due to date range change')
+      fetchOrders()
+    }
+  }, [startDate, endDate])
+
+  // Also watch local dates specifically for independent mode
+  useEffect(() => {
+    console.log('📅 Local date range changed:', { localStartDate, localEndDate, hasDataLoaded, propStartDate, propEndDate })
+    // Only trigger if in independent mode (no props) and data has been loaded
+    if (propStartDate === undefined && propEndDate === undefined && hasDataLoaded && (localStartDate || localEndDate)) {
+      console.log('🔄 Auto-refetching orders due to local date range change in independent mode')
+      fetchOrders()
+    }
+  }, [localStartDate, localEndDate])
+
+  // Trigger refresh when refreshTrigger changes (from dashboard refresh button)
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      console.log('🔄 Refreshing orders due to dashboard refresh trigger')
+      fetchOrders()
+    }
+  }, [refreshTrigger])
 
   // Fetch order details from API
   const fetchOrderDetails = async (orderId) => {
@@ -304,7 +477,7 @@ const OrdersTable = ({ onRefreshOrders }) => {
     <div className="orders-table-container">
       <div className="orders-header">
         <div className="orders-title-section">
-          <h2 className="orders-title">All Orders Today</h2>
+          <h2 className="orders-title">All Orders</h2>
           {selectedOrders.length > 0 && (
             <div className="fulfill-section">
               <span className="selected-count">
@@ -320,6 +493,64 @@ const OrdersTable = ({ onRefreshOrders }) => {
             </div>
           )}
         </div>
+        
+        {/* Date filter section - only show if not using props (independent mode) */}
+        {propStartDate === undefined && propEndDate === undefined && (
+          <div className="orders-date-filter">
+            <div className="date-inputs">
+              <div className="date-input-group">
+                <label htmlFor="orders-start-date">Start Date:</label>
+                <input
+                  id="orders-start-date"
+                  type="date"
+                  value={localStartDate}
+                  onChange={(e) => {
+                    console.log('📅 Orders page date changed:', e.target.value)
+                    setLocalStartDate(e.target.value)
+                  }}
+                  className="date-input"
+                  disabled={loading}
+                />
+              </div>
+              <div className="date-input-group">
+                <label htmlFor="orders-end-date">End Date:</label>
+                <input
+                  id="orders-end-date"
+                  type="date"
+                  value={localEndDate}
+                  onChange={(e) => {
+                    console.log('📅 Orders page end date changed:', e.target.value)
+                    setLocalEndDate(e.target.value)
+                  }}
+                  className="date-input"
+                  disabled={loading}
+                />
+              </div>
+              {(localStartDate || localEndDate) && (
+                <button 
+                  className="clear-dates-btn"
+                  onClick={() => {
+                    console.log('🧹 Clearing orders page dates')
+                    setLocalStartDate('')
+                    setLocalEndDate('')
+                    localStorage.removeItem('shoplytic-orders-start-date')
+                    localStorage.removeItem('shoplytic-orders-end-date')
+                    // Always trigger refresh when clearing dates to show all-time data
+                    if (hasDataLoaded) {
+                      console.log('🔄 Refreshing after clearing dates')
+                      fetchOrders()
+                    }
+                  }}
+                  title="Clear date filter"
+                  disabled={loading}
+                >
+                  ✕ Clear
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        
         <div className="orders-controls">
           <div className="search-container">
             <input
@@ -344,19 +575,20 @@ const OrdersTable = ({ onRefreshOrders }) => {
             <option>Cancelled</option>
             <option>Fulfilled</option>
           </select>
-          <button 
-            className="refresh-orders-btn"
-            onClick={() => {
-              fetchOrders()
-              // Also refresh dashboard metrics if callback provided
-              if (onRefreshOrders) {
-                onRefreshOrders()
-              }
-            }}
-            disabled={loading}
-          >
-            🔄 {loading ? 'Loading...' : 'Refresh'}
-          </button>
+          {/* Refresh button - only show if not using refreshTrigger (independent mode) */}
+          {refreshTrigger === undefined && (
+            <button 
+              className="refresh-orders-btn"
+              onClick={() => {
+                console.log('🔄 Orders page refresh clicked')
+                fetchOrders()
+              }}
+              disabled={loading}
+              title="Refresh orders data"
+            >
+              🔄 {loading ? 'Loading...' : 'Refresh'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -467,9 +699,9 @@ const OrdersTable = ({ onRefreshOrders }) => {
         {!loading && filteredOrders.length === 0 && hasDataLoaded && (
           <div className="no-orders">
             {orders.length === 0 ? (
-              <p>No orders available from the API.</p>
+              <p>📋 No orders found for the selected date range.</p>
             ) : (
-              <p>No orders found matching your search criteria.</p>
+              <p>🔍 No orders found matching your search criteria.</p>
             )}
           </div>
         )}

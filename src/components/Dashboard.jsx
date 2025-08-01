@@ -8,25 +8,40 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(false) // Changed to false - no auto loading
   const [error, setError] = useState(null)
   const [lastFetchTime, setLastFetchTime] = useState(null)
-  const [refreshCooldown, setRefreshCooldown] = useState(0)
   const [hasDataLoaded, setHasDataLoaded] = useState(false) // Track if data has been loaded
+  
+  // Date range state
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  
+  // Ref to trigger orders table refresh
+  const [ordersRefreshTrigger, setOrdersRefreshTrigger] = useState(0)
 
-  // Rate limiting constants - keeping cooldown for manual refresh
-  const REFRESH_COOLDOWN_MS = 30 * 1000 // 30 seconds cooldown for refresh button
+  // Save dates to localStorage when they change
+  useEffect(() => {
+    if (startDate) {
+      localStorage.setItem('shoplytic-start-date', startDate)
+    }
+  }, [startDate])
 
-  // Start refresh button cooldown
-  const startRefreshCooldown = () => {
-    setRefreshCooldown(REFRESH_COOLDOWN_MS / 1000) // Convert to seconds for display
-    const interval = setInterval(() => {
-      setRefreshCooldown((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval)
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-  }
+  useEffect(() => {
+    if (endDate) {
+      localStorage.setItem('shoplytic-end-date', endDate)
+    }
+  }, [endDate])
+
+  // Load saved dates on component mount
+  useEffect(() => {
+    const savedStartDate = localStorage.getItem('shoplytic-start-date')
+    const savedEndDate = localStorage.getItem('shoplytic-end-date')
+    
+    if (savedStartDate) {
+      setStartDate(savedStartDate)
+    }
+    if (savedEndDate) {
+      setEndDate(savedEndDate)
+    }
+  }, [])
 
   // Fetch order summary from API
   const fetchOrderSummary = async (isManualRefresh = false) => {
@@ -37,7 +52,22 @@ const Dashboard = () => {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
       
-      const response = await fetch('https://n8n.food-u.live/webhook/get-orders-summary', {
+      // Build URL with date parameters
+      const url = new URL('https://n8n.food-u.live/webhook/get-orders-summary')
+      if (startDate) {
+        url.searchParams.append('startDate', startDate)
+        console.log('📅 Added startDate parameter:', startDate)
+      }
+      if (endDate) {
+        url.searchParams.append('endDate', endDate)
+        console.log('📅 Added endDate parameter:', endDate)
+      }
+      
+      console.log('📊 Fetching dashboard summary from URL:', url.toString())
+      console.log('📊 URL should match format: https://n8n.food-u.live/webhook/get-orders-summary?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD')
+      
+      const response = await fetch(url.toString(), {
+        method: 'GET',
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
@@ -50,7 +80,25 @@ const Dashboard = () => {
         throw new Error(`API returned ${response.status}: ${response.statusText}`)
       }
       
-      const data = await response.json()
+      // Check if response has content
+      const contentType = response.headers.get('content-type')
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('API returned non-JSON response')
+      }
+      
+      const responseText = await response.text()
+      if (!responseText || responseText.trim() === '') {
+        throw new Error('API returned empty response')
+      }
+      
+      let data
+      try {
+        data = JSON.parse(responseText)
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError)
+        console.error('Response text:', responseText)
+        throw new Error('API returned invalid JSON format')
+      }
       
       // Validate the response has the expected fields
       if (typeof data === 'object' && data !== null) {
@@ -68,10 +116,18 @@ const Dashboard = () => {
         localStorage.setItem('shoplytic-last-fetch', Date.now().toString())
         setHasDataLoaded(true) // Mark data as loaded
         
-        // Start refresh button cooldown only for manual refresh
-        if (isManualRefresh) {
-          startRefreshCooldown()
-        }
+        // Save dashboard data to localStorage for persistence across page switches
+        localStorage.setItem('shoplytic-dashboard-data', JSON.stringify({
+          totalOrders: data.totalOrders || 0,
+          totalRevenue: data.totalRevenue || 0,
+          codConfirmed: data.codConfirmed || 0,
+          prepaidOrders: data.prepaidOrders || 0,
+          cancelled: data.cancelled || 0,
+          fulfilledOrders: data.fulfilledOrders || 0
+        }))
+        localStorage.setItem('shoplytic-dashboard-loaded', 'true')
+        
+        // Removed cooldown functionality - no more startRefreshCooldown()
       } else {
         throw new Error('Invalid response format')
       }
@@ -83,6 +139,12 @@ const Dashboard = () => {
         errorMessage = 'Request timed out'
       } else if (err.message.includes('404')) {
         errorMessage = 'Webhook not found - please activate it first'
+      } else if (err.message.includes('empty response')) {
+        errorMessage = 'API returned empty response - Webhook may not be configured correctly'
+      } else if (err.message.includes('invalid JSON')) {
+        errorMessage = 'API returned invalid data format - Check webhook response format'
+      } else if (err.message.includes('non-JSON response')) {
+        errorMessage = 'API returned non-JSON response - Check webhook content-type header'
       } else {
         errorMessage = err.message
       }
@@ -111,14 +173,43 @@ const Dashboard = () => {
       setLastFetchTime(parseInt(storedLastFetchTime))
     }
     
-    // No auto-loading - user must manually refresh
+    // Restore dashboard data if available
+    const savedDashboardData = localStorage.getItem('shoplytic-dashboard-data')
+    const savedDashboardLoaded = localStorage.getItem('shoplytic-dashboard-loaded') === 'true'
+    
+    if (savedDashboardData && savedDashboardLoaded) {
+      try {
+        const parsedData = JSON.parse(savedDashboardData)
+        setOrderSummary(parsedData)
+        setHasDataLoaded(true)
+        console.log('📊 Restored dashboard data from localStorage')
+      } catch (error) {
+        console.error('Error parsing saved dashboard data:', error)
+        localStorage.removeItem('shoplytic-dashboard-data')
+        localStorage.removeItem('shoplytic-dashboard-loaded')
+      }
+    }
+    
+    // No auto-loading - user must manually refresh if no saved data
   }, [])
 
-  // Handle manual refresh - only way to load data
+  // Auto-refresh when date range changes (if data has been loaded before)
+  useEffect(() => {
+    console.log('📅 Dashboard date range changed:', { startDate, endDate, hasDataLoaded })
+    if (hasDataLoaded && (startDate || endDate)) {
+      console.log('🔄 Auto-refetching dashboard summary due to date range change')
+      fetchOrderSummary()
+      setOrdersRefreshTrigger(prev => prev + 1) // Also trigger orders refresh
+    }
+  }, [startDate, endDate])
+
+  // Handle manual refresh - no cooldown, immediate refresh
   const handleRefresh = () => {
-    if (refreshCooldown > 0) return // Still in button cooldown
-    
+    // Refresh dashboard metrics
     fetchOrderSummary(true) // Manual refresh, always allowed
+    
+    // Trigger orders table refresh
+    setOrdersRefreshTrigger(prev => prev + 1)
   }
 
   // Create metrics array from API data
@@ -175,13 +266,59 @@ const Dashboard = () => {
             <h1 className="dashboard-title">Dashboard Overview</h1>
             <p className="dashboard-subtitle">Real-time analytics and insights</p>
           </div>
+          
+          <div className="date-filter-section">
+            <div className="date-inputs">
+              <div className="date-input-group">
+                <label htmlFor="start-date">Start Date:</label>
+                <input
+                  id="start-date"
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="date-input"
+                />
+              </div>
+              <div className="date-input-group">
+                <label htmlFor="end-date">End Date:</label>
+                <input
+                  id="end-date"
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="date-input"
+                />
+              </div>
+              {(startDate || endDate) && (
+                <button 
+                  className="clear-dates-btn"
+                  onClick={() => {
+                    setStartDate('')
+                    setEndDate('')
+                    localStorage.removeItem('shoplytic-start-date')
+                    localStorage.removeItem('shoplytic-end-date')
+                    // Also trigger refresh if data has been loaded to show all-time data
+                    if (hasDataLoaded) {
+                      fetchOrderSummary()
+                      setOrdersRefreshTrigger(prev => prev + 1)
+                    }
+                  }}
+                  title="Clear date filter"
+                >
+                  ✕ Clear
+                </button>
+              )}
+            </div>
+          </div>
+          
           <div className="header-actions">
             <button 
               className="refresh-btn"
               onClick={handleRefresh}
-              disabled={loading || refreshCooldown > 0}
+              disabled={loading}
+              title="Refresh dashboard metrics and orders"
             >
-              🔄 {loading ? 'Loading...' : refreshCooldown > 0 ? `Wait ${refreshCooldown}s` : 'Refresh'}
+              🔄 {loading ? 'Loading...' : 'Refresh'}
             </button>
             <button className="theme-toggle">
               🌙
@@ -249,7 +386,11 @@ const Dashboard = () => {
         </section>
 
         <section className="orders-section">
-          <OrdersTable onRefreshOrders={fetchOrderSummary} />
+          <OrdersTable 
+            startDate={startDate}
+            endDate={endDate}
+            refreshTrigger={ordersRefreshTrigger}
+          />
         </section>
       </main>
     </div>

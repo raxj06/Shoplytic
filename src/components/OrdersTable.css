@@ -25,6 +25,70 @@
   gap: 1rem;
 }
 
+.orders-date-filter {
+  display: flex;
+  align-items: center;
+  order: 2;
+}
+
+.orders-date-filter .date-inputs {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.orders-date-filter .date-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.orders-date-filter .date-input-group label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #64748b;
+  margin: 0;
+}
+
+.orders-date-filter .date-input {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  background: white;
+  transition: border-color 0.2s;
+  min-width: 140px;
+}
+
+.orders-date-filter .date-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.orders-date-filter .clear-dates-btn {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: #dc2626;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+
+.orders-date-filter .clear-dates-btn:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.orders-controls {
+  order: 3;
+}
+
 .orders-title-section {
   display: flex;
   flex-direction: column;
@@ -623,6 +687,32 @@ details[open] summary {
 }
 
 @media (max-width: 768px) {
+  .orders-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+  
+  .orders-date-filter {
+    order: 2;
+    justify-content: center;
+  }
+  
+  .orders-date-filter .date-inputs {
+    flex-direction: column;
+    gap: 0.75rem;
+    width: 100%;
+  }
+  
+  .orders-date-filter .date-input {
+    min-width: auto;
+    width: 100%;
+  }
+  
+  .orders-controls {
+    order: 3;
+  }
+  
   .modal-content {
     width: 95vw;
     max-height: 95vh;
