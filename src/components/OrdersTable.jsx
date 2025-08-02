@@ -9,6 +9,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
   const [error, setError] = useState(null)
   const [selectedOrders, setSelectedOrders] = useState([])
   const [fulfilling, setFulfilling] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [hasDataLoaded, setHasDataLoaded] = useState(false) // Track if data has been loaded
   
   // Local date state for independent date control (when not getting dates from props)
@@ -212,17 +213,38 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
       //   "createdAt": "2025-07-30T23:15:30-04:00",
       //   "fulfillmentStatus": "fulfilled"
       // }
-      const transformedOrders = ordersList.map(order => ({
-        orderNumber: (order.orderNumber || order.order_id)?.toString() || 'N/A',
-        customer: order.customerName || order.customer_name || 'Unknown Customer',
-        totalPrice: order.totalPrice || order.total_price ? `₹${order.totalPrice || order.total_price}` : '₹0',
-        paymentType: order.paymentType || order.payment_type || 'unknown',
-        status: order.status || order.payment_status || 'pending',
-        fulfillmentStatus: order.fulfillmentStatus || order.fulfillment_status || 'unfulfilled',
-        createdAt: order.createdAt || order.created_at ? 
-          new Date(order.createdAt || order.created_at).toLocaleString() : 
-          new Date().toLocaleString()
-      }))
+      
+      // Get current orders from state to preserve local changes
+      const currentOrders = orders || []
+      const currentOrdersMap = new Map(currentOrders.map(order => [order.orderNumber, order]))
+      
+      const transformedOrders = ordersList.map(order => {
+        const orderNumber = (order.orderNumber || order.order_id)?.toString() || 'N/A'
+        const apiData = {
+          orderNumber,
+          customer: order.customerName || order.customer_name || 'Unknown Customer',
+          totalPrice: order.totalPrice || order.total_price ? `₹${order.totalPrice || order.total_price}` : '₹0',
+          paymentType: order.paymentType || order.payment_type || 'unknown',
+          status: order.status || order.payment_status || 'pending',
+          fulfillmentStatus: order.fulfillmentStatus || order.fulfillment_status || 'unfulfilled',
+          createdAt: order.createdAt || order.created_at ? 
+            new Date(order.createdAt || order.created_at).toLocaleString() : 
+            new Date().toLocaleString()
+        }
+        
+        // Check if we have this order locally with updated status
+        const existingOrder = currentOrdersMap.get(orderNumber)
+        if (existingOrder && (existingOrder.fulfillmentStatus === 'fulfilled' || existingOrder.fulfillmentStatus === 'cancelled')) {
+          // Preserve local status changes (fulfilled/cancelled) over API data
+          console.log(`🔄 Preserving local status for order ${orderNumber}: ${existingOrder.fulfillmentStatus}`)
+          return {
+            ...apiData,
+            fulfillmentStatus: existingOrder.fulfillmentStatus
+          }
+        }
+        
+        return apiData
+      })
       
       console.log('🔄 Transformed orders with fulfillment status:', transformedOrders.map(o => ({
         orderNumber: o.orderNumber,
@@ -387,10 +409,10 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
   // Handle select all checkbox
   const handleSelectAll = (isSelected) => {
     if (isSelected) {
-      const unfulfilledOrders = filteredOrders
+      const selectableOrders = filteredOrders
         .filter(order => order.fulfillmentStatus === 'unfulfilled')
         .map(order => order.orderNumber)
-      setSelectedOrders(unfulfilledOrders)
+      setSelectedOrders(selectableOrders)
     } else {
       setSelectedOrders([])
     }
@@ -417,11 +439,17 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
           if (response.ok) {
             results.push({ orderNumber, success: true })
             // Update the order status locally
-            setOrders(prev => prev.map(order => 
-              order.orderNumber === orderNumber 
-                ? { ...order, fulfillmentStatus: 'fulfilled' }
-                : order
-            ))
+            setOrders(prev => {
+              const updatedOrders = prev.map(order => 
+                order.orderNumber === orderNumber 
+                  ? { ...order, fulfillmentStatus: 'fulfilled' }
+                  : order
+              )
+              // Immediately save updated orders to localStorage to persist across refreshes
+              localStorage.setItem('shoplytic-orders-data', JSON.stringify(updatedOrders))
+              console.log(`💾 Saved fulfilled order ${orderNumber} to localStorage`)
+              return updatedOrders
+            })
           } else {
             results.push({ orderNumber, success: false, error: `${response.status}: ${response.statusText}` })
           }
@@ -459,6 +487,88 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
     }
   }
 
+  // Cancel selected orders
+  const cancelSelectedOrders = async () => {
+    if (selectedOrders.length === 0) return
+
+    setCancelling(true)
+    const results = []
+
+    try {
+      for (const orderNumber of selectedOrders) {
+        try {
+          const response = await fetch('https://n8n.food-u.live/webhook/cancel-order', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ order_id: orderNumber })
+          })
+
+          if (response.ok) {
+            // Parse the response to check if cancellation was successful
+            const responseData = await response.json()
+            console.log(`📋 Cancel response for order ${orderNumber}:`, responseData)
+            
+            // Check if response is an array or single object
+            const cancelData = Array.isArray(responseData) ? responseData[0] : responseData
+            
+            if (cancelData && cancelData.success === true) {
+              results.push({ orderNumber, success: true, message: cancelData.message || 'Order cancelled successfully' })
+              // Update the order status locally only if API confirms success
+              setOrders(prev => {
+                const updatedOrders = prev.map(order => 
+                  order.orderNumber === orderNumber 
+                    ? { ...order, fulfillmentStatus: 'cancelled' }
+                    : order
+                )
+                // Immediately save updated orders to localStorage to persist across refreshes
+                localStorage.setItem('shoplytic-orders-data', JSON.stringify(updatedOrders))
+                console.log(`💾 Saved cancelled order ${orderNumber} to localStorage`)
+                return updatedOrders
+              })
+            } else {
+              // API returned OK but success is false
+              const errorMsg = cancelData?.message || 'Cancellation failed - API returned success: false'
+              results.push({ orderNumber, success: false, error: errorMsg })
+            }
+          } else {
+            results.push({ orderNumber, success: false, error: `${response.status}: ${response.statusText}` })
+          }
+        } catch (err) {
+          results.push({ orderNumber, success: false, error: err.message })
+        }
+      }
+
+      // Show results
+      const successful = results.filter(r => r.success).length
+      const failed = results.filter(r => !r.success).length
+      
+      if (successful > 0) {
+        console.log(`✅ Successfully cancelled ${successful} orders`)
+        // Refresh dashboard metrics if callback provided
+        if (onRefreshOrders) {
+          onRefreshOrders()
+        }
+      }
+      
+      if (failed > 0) {
+        console.error(`❌ Failed to cancel ${failed} orders`)
+        results.filter(r => !r.success).forEach(r => {
+          console.error(`Order ${r.orderNumber}: ${r.error}`)
+        })
+      }
+
+      // Clear selections
+      setSelectedOrders([])
+      
+    } catch (err) {
+      console.error('Error cancelling orders:', err)
+    } finally {
+      setCancelling(false)
+    }
+  }
+
   const filteredOrders = orders.filter(order => {
     const matchesSearch = order.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          order.orderNumber.toString().includes(searchTerm)
@@ -466,12 +576,12 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
     return matchesSearch && matchesStatus
   })
 
-  // Get unfulfilled orders that can be selected
-  const unfulfilledOrders = filteredOrders.filter(order => order.fulfillmentStatus === 'unfulfilled')
-  const selectedUnfulfilledCount = selectedOrders.filter(orderId => 
-    unfulfilledOrders.some(order => order.orderNumber === orderId)
+  // Get unfulfilled orders that can be selected for fulfillment/cancellation
+  const selectableOrders = filteredOrders.filter(order => order.fulfillmentStatus === 'unfulfilled')
+  const selectedSelectableCount = selectedOrders.filter(orderId => 
+    selectableOrders.some(order => order.orderNumber === orderId)
   ).length
-  const allUnfulfilledSelected = unfulfilledOrders.length > 0 && selectedUnfulfilledCount === unfulfilledOrders.length
+  const allSelectableSelected = selectableOrders.length > 0 && selectedSelectableCount === selectableOrders.length
 
   return (
     <div className="orders-table-container">
@@ -486,9 +596,16 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
               <button 
                 className="fulfill-btn"
                 onClick={fulfillSelectedOrders}
-                disabled={fulfilling || selectedOrders.length === 0}
+                disabled={fulfilling || cancelling || selectedOrders.length === 0}
               >
                 {fulfilling ? '⏳ Fulfilling...' : '✅ Fulfill Selected'}
+              </button>
+              <button 
+                className="cancel-btn"
+                onClick={cancelSelectedOrders}
+                disabled={fulfilling || cancelling || selectedOrders.length === 0}
+              >
+                {cancelling ? '⏳ Cancelling...' : '❌ Cancel Selected'}
               </button>
             </div>
           )}
@@ -605,9 +722,9 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
               <th className="checkbox-column">
                 <input
                   type="checkbox"
-                  checked={allUnfulfilledSelected}
+                  checked={allSelectableSelected}
                   onChange={(e) => handleSelectAll(e.target.checked)}
-                  disabled={loading || unfulfilledOrders.length === 0}
+                  disabled={loading || selectableOrders.length === 0}
                   title="Select all unfulfilled orders"
                 />
               </th>
@@ -639,7 +756,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
               ))
             ) : (
               filteredOrders.map((order, index) => {
-                const isUnfulfilled = order.fulfillmentStatus === 'unfulfilled'
+                const isSelectable = order.fulfillmentStatus === 'unfulfilled'
                 const isSelected = selectedOrders.includes(order.orderNumber)
                 
                 return (
@@ -649,8 +766,8 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
                         type="checkbox"
                         checked={isSelected}
                         onChange={(e) => handleOrderSelection(order.orderNumber, e.target.checked)}
-                        disabled={!isUnfulfilled || fulfilling}
-                        title={isUnfulfilled ? 'Select for fulfillment' : 'Already fulfilled'}
+                        disabled={!isSelectable || fulfilling || cancelling}
+                        title={isSelectable ? 'Select for fulfillment/cancellation' : 'Order already processed'}
                       />
                     </td>
                     <td className="order-number">{order.orderNumber}</td>
