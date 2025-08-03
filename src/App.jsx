@@ -3,6 +3,7 @@ import './App.css'
 import Sidebar from './components/Sidebar'
 import Dashboard from './components/Dashboard'
 import OrdersTable from './components/OrdersTable'
+import ProductsTable from './components/ProductsTable'
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
@@ -19,6 +20,16 @@ function App() {
               <p className="page-subtitle">View and manage all your orders</p>
             </div>
             <OrdersTable />
+          </div>
+        )
+      case 'products':
+        return (
+          <div className="products-page">
+            <div className="page-header">
+              <h1 className="page-title">Products Management</h1>
+              <p className="page-subtitle">View and manage your product inventory</p>
+            </div>
+            <ProductsTable />
           </div>
         )
       default:

@@ -12,6 +12,11 @@ const Sidebar = ({ activeTab, onTabChange }) => {
       id: 'orders',
       label: 'Orders',
       icon: '📦'
+    },
+    {
+      id: 'products',
+      label: 'Products',
+      icon: '🏷️'
     }
   ]
 

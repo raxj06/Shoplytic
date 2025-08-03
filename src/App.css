@@ -15,6 +15,10 @@
   padding: 2rem;
 }
 
+.products-page {
+  padding: 2rem;
+}
+
 .page-header {
   margin-bottom: 2rem;
 }
@@ -46,6 +50,10 @@
   }
   
   .orders-page {
+    padding: 1rem;
+  }
+  
+  .products-page {
     padding: 1rem;
   }
   
