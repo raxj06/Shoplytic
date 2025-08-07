@@ -4,6 +4,7 @@ import './OrdersTable.css'
 const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTrigger }) => {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('All Statuses')
+  const [fulfillmentFilter, setFulfillmentFilter] = useState('All Fulfillment')
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(false) // Changed to false - no auto loading
   const [error, setError] = useState(null)
@@ -57,6 +58,60 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
       console.log('💾 Saved orders data to localStorage:', orders.length, 'orders')
     }
   }, [orders])
+  
+  // Debug function to clear persisted order statuses (can be called from browser console)
+  window.clearPersistedOrderStatuses = () => {
+    localStorage.removeItem('shoplytic-order-statuses')
+    console.log('🗑️ Cleared persisted order statuses from localStorage')
+  }
+  
+  // Debug function to manually set an order status (for testing)
+  window.setOrderStatus = (orderNumber, status) => {
+    const persistedStatuses = JSON.parse(localStorage.getItem('shoplytic-order-statuses') || '{}')
+    persistedStatuses[orderNumber] = status
+    localStorage.setItem('shoplytic-order-statuses', JSON.stringify(persistedStatuses))
+    console.log(`🔧 Set order ${orderNumber} status to: ${status}`)
+    // Trigger a re-fetch to see the changes
+    fetchOrders()
+  }
+  
+  // Debug function to sync order statuses (resolve mismatches)
+  window.syncOrderStatuses = () => {
+    const persistedStatuses = JSON.parse(localStorage.getItem('shoplytic-order-statuses') || '{}')
+    console.log('🔄 Current persisted statuses:', persistedStatuses)
+    
+    // Update current orders state to match persisted statuses
+    setOrders(prev => {
+      const updatedOrders = prev.map(order => {
+        const persistedStatus = persistedStatuses[order.orderNumber]
+        if (persistedStatus && (persistedStatus === 'fulfilled' || persistedStatus === 'cancelled' || persistedStatus === 'restocked')) {
+          console.log(`🔄 Syncing order ${order.orderNumber} to status: ${persistedStatus}`)
+          return {
+            ...order,
+            fulfillmentStatus: persistedStatus
+          }
+        }
+        return order
+      })
+      
+      // Save updated orders to localStorage
+      localStorage.setItem('shoplytic-orders-data', JSON.stringify(updatedOrders))
+      return updatedOrders
+    })
+    
+    console.log('✅ Order statuses synchronized')
+  }
+  
+  // Debug function to fix mismatched orders (prioritize local processed status over API unfulfilled)
+  window.fixOrderMismatches = () => {
+    console.log('🔧 Fixing order status mismatches - preserving local processed statuses over API unfulfilled')
+    const persistedStatuses = JSON.parse(localStorage.getItem('shoplytic-order-statuses') || '{}')
+    console.log('� Current persisted statuses:', persistedStatuses)
+    
+    // Force refresh to apply new priority logic
+    fetchOrders()
+    console.log('🔄 Applied new priority logic (local processed status > API unfulfilled)')
+  }
 
   // Save hasDataLoaded state to localStorage
   useEffect(() => {
@@ -218,6 +273,10 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
       const currentOrders = orders || []
       const currentOrdersMap = new Map(currentOrders.map(order => [order.orderNumber, order]))
       
+      // Also get persisted order status changes from localStorage
+      const persistedOrderStatuses = JSON.parse(localStorage.getItem('shoplytic-order-statuses') || '{}')
+      console.log('💾 Loading persisted order statuses:', persistedOrderStatuses)
+      
       const transformedOrders = ordersList.map(order => {
         const orderNumber = (order.orderNumber || order.order_id)?.toString() || 'N/A'
         const apiData = {
@@ -232,11 +291,55 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
             new Date().toLocaleString()
         }
         
-        // Check if we have this order locally with updated status
+        // Priority: Determine the most accurate status
+        const apiStatus = apiData.fulfillmentStatus
+        const persistedStatus = persistedOrderStatuses[orderNumber]
         const existingOrder = currentOrdersMap.get(orderNumber)
-        if (existingOrder && (existingOrder.fulfillmentStatus === 'fulfilled' || existingOrder.fulfillmentStatus === 'cancelled')) {
-          // Preserve local status changes (fulfilled/cancelled) over API data
-          console.log(`🔄 Preserving local status for order ${orderNumber}: ${existingOrder.fulfillmentStatus}`)
+        
+        // Smart priority logic:
+        // 1. If we have a local action (fulfilled/cancelled/restocked), prioritize it over unfulfilled API status
+        // 2. Only let API override local status if API has a processed status (fulfilled/cancelled/restocked)
+        // 3. This prevents API's unfulfilled from overriding manual cancellations/fulfillments
+        
+        if (persistedStatus && (persistedStatus === 'fulfilled' || persistedStatus === 'cancelled' || persistedStatus === 'restocked')) {
+          // We have a local processed status
+          if (apiStatus && (apiStatus === 'fulfilled' || apiStatus === 'cancelled' || apiStatus === 'restocked')) {
+            // API also has processed status - use API as source of truth
+            console.log(`🔄 Using API processed status for order ${orderNumber}: ${apiStatus} (overriding local ${persistedStatus})`)
+            if (apiStatus !== persistedStatus) {
+              persistedOrderStatuses[orderNumber] = apiStatus
+              localStorage.setItem('shoplytic-order-statuses', JSON.stringify(persistedOrderStatuses))
+              console.log(`💾 Updated persisted status for order ${orderNumber} from ${persistedStatus} to ${apiStatus}`)
+            }
+            return apiData
+          } else {
+            // API has unfulfilled/no status, but we have local processed status - keep local
+            console.log(`🔄 Keeping local processed status for order ${orderNumber}: ${persistedStatus} (API: ${apiStatus || 'none'})`)
+            return {
+              ...apiData,
+              fulfillmentStatus: persistedStatus
+            }
+          }
+        }
+        
+        // No local processed status - use API status if available
+        if (apiStatus) {
+          console.log(`🔄 Using API status for order ${orderNumber}: ${apiStatus} (no local override)`)
+          // Save API status to persistence for consistency
+          if (apiStatus !== persistedStatus) {
+            persistedOrderStatuses[orderNumber] = apiStatus
+            localStorage.setItem('shoplytic-order-statuses', JSON.stringify(persistedOrderStatuses))
+            console.log(`💾 Saved API status for order ${orderNumber}: ${apiStatus}`)
+          }
+          return apiData
+        }
+        
+        // Fallback to existing order status
+        if (existingOrder && (existingOrder.fulfillmentStatus === 'fulfilled' || existingOrder.fulfillmentStatus === 'cancelled' || existingOrder.fulfillmentStatus === 'restocked')) {
+          console.log(`🔄 Using existing order status for order ${orderNumber}: ${existingOrder.fulfillmentStatus}`)
+          // Save to persistence for future consistency
+          persistedOrderStatuses[orderNumber] = existingOrder.fulfillmentStatus
+          localStorage.setItem('shoplytic-order-statuses', JSON.stringify(persistedOrderStatuses))
           return {
             ...apiData,
             fulfillmentStatus: existingOrder.fulfillmentStatus
@@ -438,6 +541,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
 
           if (response.ok) {
             results.push({ orderNumber, success: true })
+            
             // Update the order status locally
             setOrders(prev => {
               const updatedOrders = prev.map(order => 
@@ -450,6 +554,13 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
               console.log(`💾 Saved fulfilled order ${orderNumber} to localStorage`)
               return updatedOrders
             })
+            
+            // Also persist the status change in a separate localStorage entry for better reliability
+            const persistedStatuses = JSON.parse(localStorage.getItem('shoplytic-order-statuses') || '{}')
+            persistedStatuses[orderNumber] = 'fulfilled'
+            localStorage.setItem('shoplytic-order-statuses', JSON.stringify(persistedStatuses))
+            console.log(`💾 Persisted fulfilled status for order ${orderNumber}`)
+            
           } else {
             results.push({ orderNumber, success: false, error: `${response.status}: ${response.statusText}` })
           }
@@ -515,6 +626,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
             
             if (cancelData && cancelData.success === true) {
               results.push({ orderNumber, success: true, message: cancelData.message || 'Order cancelled successfully' })
+              
               // Update the order status locally only if API confirms success
               setOrders(prev => {
                 const updatedOrders = prev.map(order => 
@@ -527,6 +639,13 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
                 console.log(`💾 Saved cancelled order ${orderNumber} to localStorage`)
                 return updatedOrders
               })
+              
+              // Also persist the status change in a separate localStorage entry for better reliability
+              const persistedStatuses = JSON.parse(localStorage.getItem('shoplytic-order-statuses') || '{}')
+              persistedStatuses[orderNumber] = 'cancelled'
+              localStorage.setItem('shoplytic-order-statuses', JSON.stringify(persistedStatuses))
+              console.log(`💾 Persisted cancelled status for order ${orderNumber}`)
+              
             } else {
               // API returned OK but success is false
               const errorMsg = cancelData?.message || 'Cancellation failed - API returned success: false'
@@ -573,7 +692,8 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
     const matchesSearch = order.customer.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          order.orderNumber.toString().includes(searchTerm)
     const matchesStatus = statusFilter === 'All Statuses' || order.status.toLowerCase() === statusFilter.toLowerCase()
-    return matchesSearch && matchesStatus
+    const matchesFulfillment = fulfillmentFilter === 'All Fulfillment' || order.fulfillmentStatus.toLowerCase() === fulfillmentFilter.toLowerCase()
+    return matchesSearch && matchesStatus && matchesFulfillment
   })
 
   // Get unfulfilled orders that can be selected for fulfillment/cancellation
@@ -691,6 +811,18 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
             <option>Pending</option>
             <option>Cancelled</option>
             <option>Fulfilled</option>
+          </select>
+          <select
+            value={fulfillmentFilter}
+            onChange={(e) => setFulfillmentFilter(e.target.value)}
+            className="fulfillment-filter"
+            disabled={loading}
+          >
+            <option>All Fulfillment</option>
+            <option>Unfulfilled</option>
+            <option>Fulfilled</option>
+            <option>Cancelled</option>
+            <option>Restocked</option>
           </select>
           {/* Refresh button - only show if not using refreshTrigger (independent mode) */}
           {refreshTrigger === undefined && (

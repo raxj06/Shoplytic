@@ -297,7 +297,8 @@
   font-size: 0.875rem;
 }
 
-.status-filter {
+.status-filter,
+.fulfillment-filter {
   padding: 0.75rem 1rem;
   border: 1px solid #d1d5db;
   border-radius: 0.5rem;
@@ -307,13 +308,15 @@
   min-width: 140px;
 }
 
-.status-filter:focus {
+.status-filter:focus,
+.fulfillment-filter:focus {
   outline: none;
   border-color: #3b82f6;
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-.status-filter:disabled {
+.status-filter:disabled,
+.fulfillment-filter:disabled {
   opacity: 0.6;
   cursor: not-allowed;
   background: #f9fafb;
