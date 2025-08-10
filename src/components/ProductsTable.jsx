@@ -198,9 +198,9 @@ const ProductsTable = () => {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
       
-      console.log('📦 Fetching products from API:', 'https://n8n.food-u.live/webhook/get-all-products')
+      console.log('📦 Fetching products from API:', 'https://n8n1.food-u.live/webhook/get-all-products')
       
-      const response = await fetch('https://n8n.food-u.live/webhook/get-all-products', {
+      const response = await fetch('https://n8n1.food-u.live/webhook/get-all-products', {
         method: 'GET',
         signal: controller.signal,
         headers: {
@@ -336,7 +336,7 @@ const ProductsTable = () => {
 
       console.log('📦 Updating product with data:', updateData)
 
-      const response = await fetch('https://n8n.food-u.live/webhook/update-product-info', {
+      const response = await fetch('https://n8n1.food-u.live/webhook/update-product-info', {
         method: 'POST',
         signal: controller.signal,
         headers: {

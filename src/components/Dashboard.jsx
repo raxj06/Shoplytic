@@ -53,7 +53,7 @@ const Dashboard = () => {
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
       
       // Build URL with date parameters
-      const url = new URL('https://n8n.food-u.live/webhook/get-orders-summary')
+      const url = new URL('https://n8n1.food-u.live/webhook/get-orders-summary')
       if (startDate) {
         url.searchParams.append('startDate', startDate)
         console.log('📅 Added startDate parameter:', startDate)
@@ -64,7 +64,7 @@ const Dashboard = () => {
       }
       
       console.log('📊 Fetching dashboard summary from URL:', url.toString())
-      console.log('📊 URL should match format: https://n8n.food-u.live/webhook/get-orders-summary?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD')
+      console.log('📊 URL should match format: https://n8n1.food-u.live/webhook/get-orders-summary?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD')
       
       const response = await fetch(url.toString(), {
         method: 'GET',

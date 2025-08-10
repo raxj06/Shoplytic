@@ -180,7 +180,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
       
       // Build URL with date parameters
-      const url = new URL('https://n8n.food-u.live/webhook/get-orders-list')
+      const url = new URL('https://n8n1.food-u.live/webhook/get-orders-list')
       if (startDate) {
         url.searchParams.append('startDate', startDate)
         console.log('📅 Added startDate parameter:', startDate)
@@ -191,7 +191,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
       }
       
       console.log('📋 Fetching orders from URL:', url.toString())
-      console.log('📋 URL should match format: https://n8n.food-u.live/webhook/get-orders-list?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD')
+      console.log('📋 URL should match format: https://n8n1.food-u.live/webhook/get-orders-list?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD')
       
       const response = await fetch(url.toString(), {
         method: 'GET',
@@ -429,7 +429,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
       
-      const response = await fetch('https://n8n.food-u.live/webhook/get-order-details', {
+      const response = await fetch('https://n8n1.food-u.live/webhook/get-order-details', {
         method: 'POST',
         signal: controller.signal,
         headers: {
@@ -531,7 +531,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
     try {
       for (const orderNumber of selectedOrders) {
         try {
-          const response = await fetch('https://n8n.food-u.live/webhook/fulfill-order', {
+          const response = await fetch('https://n8n1.food-u.live/webhook/fulfill-order', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -608,7 +608,7 @@ const OrdersTable = ({ startDate: propStartDate, endDate: propEndDate, refreshTr
     try {
       for (const orderNumber of selectedOrders) {
         try {
-          const response = await fetch('https://n8n.food-u.live/webhook/cancel-order', {
+          const response = await fetch('https://n8n1.food-u.live/webhook/cancel-order', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

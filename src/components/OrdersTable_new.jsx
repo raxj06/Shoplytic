@@ -19,7 +19,7 @@ const OrdersTable = ({ onRefreshOrders }) => {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
       
-      const response = await fetch('https://n8n.food-u.live/webhook/get-orders-list', {
+      const response = await fetch('https://n8n1.food-u.live/webhook/get-orders-list', {
         signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
@@ -126,7 +126,7 @@ const OrdersTable = ({ onRefreshOrders }) => {
     try {
       for (const orderNumber of selectedOrders) {
         try {
-          const response = await fetch('https://n8n.food-u.live/webhook/fulfill-order', {
+          const response = await fetch('https://n8n1.food-u.live/webhook/fulfill-order', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
